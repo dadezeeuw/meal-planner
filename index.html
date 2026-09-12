@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf7f1">
+  <title>Our Table · Family cookbook</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="config.js"></script>
+  <script defer src="ingredients.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#recipes"><span class="brand-mark" aria-hidden="true">♧</span> Our Table<span class="brand-note">THE FAMILY COOKBOOK</span></a>
+    <nav aria-label="Main navigation">
+      <a href="#recipes" aria-current="page">Recipes</a><a href="#planner">Weekly Planner</a><a href="#groceries">Grocery List</a><a href="#history">History</a>
+    </nav>
+  </header>
+  <main>
+    <div id="status" class="status" role="status"></div>
+    <section id="library">
+      <div class="page-heading"><div><p class="eyebrow">GOOD FOOD. SHARED TOGETHER.</p><h1>A little inspiration<br>for your table.</h1><p class="subheading">The old favorites. The new discoveries. All in one place.</p></div><button class="primary" id="add-recipe">＋ Add recipe</button></div>
+      <div class="toolbar"><label class="search"><span aria-hidden="true">⌕</span><input type="search" id="search" placeholder="Find a recipe, ingredient, or tag…" aria-label="Search recipes"></label><label class="sort">Sort by <select id="sort"><option value="newest">Recently added</option><option value="title">Recipe name</option><option value="quickest">Quickest first</option><option value="last">Last made</option></select></label></div>
+      <div class="filter-row"><div id="tags" class="chips" aria-label="Filter recipes by tag"></div><button id="favorites" class="chip" aria-pressed="false">♡ Favorites</button></div>
+      <div class="collection-heading"><h2>Your recipe collection</h2><span id="count"></span></div>
+      <div id="recipe-grid" class="recipe-grid"></div>
+      <div id="empty" class="empty" hidden><span aria-hidden="true">♧</span><h2>Your next favorite starts here.</h2><p id="empty-message"></p><button class="primary" id="empty-add">＋ Add recipe</button><button id="reset-filters" class="secondary">Clear filters</button></div>
+    </section>
+    <section id="upcoming" class="empty" hidden><p class="eyebrow">A LITTLE MORE TO LOOK FORWARD TO</p><h1 id="upcoming-title"></h1><p id="upcoming-description"></p><a class="primary" href="#recipes">Back to recipes</a></section>
+    <footer>Made for everyday meals &amp; the people you love.<span>OUR TABLE</span></footer>
+  </main>
+  <dialog id="editor" aria-labelledby="editor-title">
+    <form id="recipe-form">
+      <div class="dialog-heading"><div><p class="eyebrow">MAKE ROOM FOR A NEW FAVORITE</p><h2 id="editor-title">Add a recipe</h2></div><button type="button" class="icon-button" data-close="editor" aria-label="Close recipe form">×</button></div>
+      <p class="notice">Preview mode · Recipes and photos stay in this tab until you reload. Database saving and image uploads await household authentication.</p>
+      <label>Recipe title <input name="title" required maxlength="160" placeholder="What are we cooking?"></label>
+      <label>Description <textarea name="description" rows="2" placeholder="A family favorite, a little backstory…"></textarea></label>
+      <div class="form-three"><label>Servings<input name="servings" type="number" min="0.25" step="0.25" value="4" required></label><label>Prep minutes<input name="prep_minutes" type="number" min="0" step="1"></label><label>Cook minutes<input name="cook_minutes" type="number" min="0" step="1"></label></div>
+      <label class="check-label"><input name="favorite" type="checkbox"> Mark as a favorite</label>
+      <label>Tags <input name="tags" placeholder="Dinner, Italian, Quick"><small>Separate tags with commas. These become your library filters.</small></label>
+      <div class="form-two"><label>Source URL <input name="source_url" type="url" placeholder="https://…"></label><label>Video URL <input name="video_url" type="url" placeholder="https://…"></label></div>
+      <label class="upload">Recipe photo<input id="photo" type="file" accept="image/jpeg,image/png,image/webp"><small>Choose a JPG, PNG, or WebP (up to 20 MB). Large photos are resized for preview.</small><img id="photo-preview" alt="Selected recipe photo" hidden></label>
+      <label>Ingredients <textarea id="ingredient-paste" rows="6" placeholder="2 tbsp olive oil&#10;1 large yellow onion, diced&#10;3 cloves garlic, minced&#10;1.5 lb chicken thighs&#10;1/2 tsp kosher salt"></textarea></label>
+      <button type="button" class="secondary" id="parse">Review ingredients</button><p class="field-hint">One ingredient per line. Review the quantities and names before previewing.</p>
+      <div id="ingredient-review"></div>
+      <label>Instructions <textarea name="instructions" rows="7" placeholder="Describe each step, with a blank line between steps."></textarea></label>
+      <p id="form-status" role="status"></p>
+      <div class="form-actions"><button type="button" class="secondary" data-close="editor">Cancel</button><button type="submit" class="primary" id="preview-submit">Add to preview collection</button></div>
+    </form>
+  </dialog>
+  <dialog id="detail" aria-labelledby="detail-title"><div id="detail-content"></div></dialog>
+</body>
+</html>
