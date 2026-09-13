@@ -11,7 +11,9 @@
     { id: 3, title: 'Chickpea lunch bowls', description: 'Crunchy vegetables and chickpeas with a lemony dressing.', servings: 2, prep_minutes: 15, cook_minutes: 0, tags: ['Lunch', 'Quick', 'Vegetarian'], favorite: false, last_made: null, ingredients: parse('1 can chickpeas, drained and rinsed\n1 cucumber, diced\n2 tomatoes, diced\n2 tbsp olive oil\n1 lemon, juiced'), instructions: 'Combine the chickpeas, cucumber, and tomatoes in a bowl.\n\nWhisk the olive oil with lemon juice and salt to taste. Toss with the vegetables and divide between two bowls.' },
     { id: 4, title: 'Weekend pancakes', description: 'A slow-morning favorite, ready for your favorite toppings.', servings: 4, prep_minutes: 10, cook_minutes: 20, tags: ['Breakfast', 'Family favorites', 'Vegetarian'], favorite: false, last_made: '2026-09-06', ingredients: parse('1.5 cups flour\n2 tsp baking powder\n1 tbsp sugar\n1.25 cups milk\n1 egg\n2 tbsp butter, melted'), instructions: 'Mix the flour, baking powder, and sugar. In another bowl, whisk the milk, egg, and melted butter.\n\nStir the wet ingredients into the dry ingredients just until combined.\n\nSpoon batter onto a lightly greased skillet over medium heat. Cook until bubbles form, then flip and cook until golden and cooked through.' }
   ];
-  let nextId = recipes.length + 1;
+  let savingRecipe = false;
+  let saveDraft = null;
+  let photoBlob = null;
   let selectedTag = '';
   let favoritesOnly = false;
   let photo = '';
@@ -55,6 +57,7 @@
     $('editor').close(); $('detail').close();
     $('detail-content').replaceChildren();
     form.reset(); photo = ''; photoVersion++;
+    saveDraft = null; photoBlob = null;
     $('photo-preview').removeAttribute('src'); $('photo-preview').hidden = true;
     $('ingredient-review').replaceChildren(); reviewedText = null;
     recipes.splice(0, recipes.length, ...JSON.parse(demoRecipes));
@@ -166,17 +169,17 @@
     }
   });
 
-  async function loadRecipes() {
+  async function loadRecipes({ savedId } = {}) {
     if (!activeUserId) return;
     const generation = authGeneration;
-    $('status').textContent = 'Loading Supabase recipes. Showing demo/preview data until reads finish.';
+    $('status').textContent = 'Loading recipes from Supabase…';
     const controller = new AbortController();
     readController?.abort();
     readController = controller;
     const timeout = setTimeout(() => controller.abort(), 15000);
     try {
       // The shared SDK client supplies and refreshes the authenticated token.
-      // Database operations remain SELECT-only.
+      // Library reads remain SELECT-only.
       async function readTable(table, order) {
         const rows = [];
         for (;;) {
@@ -193,7 +196,8 @@
       const rows = await readTable('recipes', 'id.asc');
       if (generation !== authGeneration) return;
       if (!rows.length) {
-        $('status').textContent = 'Demo/preview data · No recipes are visible to this household account. The table may be empty or access may be restricted by RLS. Changes stay in this tab only.';
+        if (savedId) throw new Error('The recipe was saved, but is not visible to this account. Check household read access.');
+        $('status').textContent = 'Demo data · No recipes are visible to this household account. The table may be empty or access may be restricted by RLS.';
         return;
       }
       const [recipeTags, tags, ingredients] = await Promise.all([
@@ -213,22 +217,23 @@
         cook_minutes: Number(row.cook_minutes || 0),
         favorite: Boolean(row.favorite ?? row.is_favorite),
         last_made: row.last_made ?? row.last_made_at ?? null,
-        photo: safeUrl(row.photo_url || row.image_url || row.photo),
+        photo: row.image_path ? client.storage.from('recipe-images').getPublicUrl(row.image_path).data.publicUrl : safeUrl(row.photo_url || row.image_url || row.photo),
         instructions: String(row.instructions || ''),
         tags: [...new Set(recipeTags.filter(link => link.recipe_id === row.id).map(link => tagNames.get(link.tag_id)).filter(Boolean))],
         ingredients: ingredients.filter(item => item.recipe_id === row.id)
           .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
           .map(item => ({ ...item, quantity_text: item.quantity_text ?? String(item.quantity ?? ''), ingredient: item.ingredient ?? item.name ?? '', unit: item.unit ?? '', preparation: item.preparation ?? '' }))
       }));
-      // Preserve anything added to the preview while the requests were pending.
-      const previews = recipes.filter(recipe => recipe.data_source === 'preview');
-      recipes.splice(0, recipes.length, ...loaded, ...previews);
+      if (savedId && !loaded.some(recipe => recipe.id === savedId)) throw new Error('The recipe was saved, but is not visible to this account. Check household read access.');
+      recipes.splice(0, recipes.length, ...loaded);
+      if (savedId) recipes.find(recipe => recipe.id === savedId).added_order = Date.now();
       selectedTag = '';
       render();
-      $('status').textContent = `Loaded ${loaded.length} Supabase recipes (read only). Tags and ingredients reflect household access. New recipes and favorite changes are preview-only and disappear on reload or logout.`;
+      $('status').textContent = `Loaded ${loaded.length} recipes from Supabase.`;
     } catch (error) {
       if (generation !== authGeneration) return;
-      $('status').textContent = `Demo/preview data · ${error.name === 'AbortError' ? 'Supabase reads timed out.' : error.message} Local recipes remain available; nothing is saved to the database.`;
+      if (savedId) throw error;
+      $('status').textContent = `${error.name === 'AbortError' ? 'Supabase reads timed out.' : error.message} Showing the currently loaded collection; demo recipes are labeled.`;
     } finally {
       clearTimeout(timeout);
     }
@@ -250,7 +255,7 @@
   const duration = recipe => recipe.prep_minutes + recipe.cook_minutes;
   function tagsFor(recipe) {
     const tags = node('div', 'card-tags');
-    if (recipe.data_source !== 'supabase') tags.append(node('span', 'tag', recipe.data_source === 'demo' ? 'Demo / preview' : 'Local preview'));
+    if (recipe.data_source === 'demo') tags.append(node('span', 'tag', 'Demo data'));
     recipe.tags.forEach(tag => tags.append(node('span', 'tag', tag)));
     return tags;
   }
@@ -350,9 +355,14 @@
     try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.href : ''; } catch { return ''; }
   }
   function openEditor() {
+    if (savingRecipe) return;
+    if (saveDraft) { $('editor').showModal(); return; }
+    Array.from(form.elements).forEach(control => { control.disabled = false; });
+    photoBlob = null;
     form.reset(); photo = ''; photoVersion++; reviewedText = null;
     $('photo-preview').hidden = true; $('photo-preview').removeAttribute('src');
     $('ingredient-review').replaceChildren(); $('form-status').textContent = '';
+    $('preview-submit').textContent = 'Save recipe';
     $('preview-submit').disabled = false;
     $('editor').showModal();
   }
@@ -371,7 +381,7 @@
   }
   $('photo').addEventListener('change', async () => {
     const version = ++photoVersion;
-    photo = ''; $('photo-preview').hidden = true; $('photo-preview').removeAttribute('src');
+    photo = ''; photoBlob = null; $('photo-preview').hidden = true; $('photo-preview').removeAttribute('src');
     $('form-status').textContent = ''; $('preview-submit').disabled = false;
     const file = $('photo').files[0];
     if (!file) return;
@@ -387,6 +397,10 @@
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.round(img.naturalWidth * scale)); canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
       canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      const compressed = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', 0.85));
+      if (version !== photoVersion) return;
+      if (!compressed) throw new Error('Photo compression failed.');
+      photoBlob = compressed;
       photo = canvas.toDataURL('image/webp', 0.85);
       $('photo-preview').src = photo; $('photo-preview').hidden = false;
     } catch {
@@ -396,31 +410,139 @@
       if (version === photoVersion) $('preview-submit').disabled = false;
     }
   });
-  form.addEventListener('submit', event => {
-    event.preventDefault();
-    if ($('preview-submit').disabled || !form.reportValidity()) return;
-    const title = field('title').value.trim();
-    if (!title) { $('form-status').textContent = 'Enter a recipe title.'; field('title').focus(); return; }
-    for (const key of ['source_url', 'video_url']) {
-      if (field(key).value && !safeUrl(field(key).value)) { $('form-status').textContent = 'Recipe and video links must use http or https.'; field(key).focus(); return; }
-    }
-    if (reviewedText !== $('ingredient-paste').value) reviewIngredients();
-    const ingredients = Array.from($('ingredient-review').children, (row, index) => {
-      const item = { sort_order: index, grocery_section: 'Other' };
-      row.querySelectorAll('input').forEach(input => { item[input.dataset.key] = input.value.trim(); });
-      item.quantity = window.Ingredients.quantityValue(item.quantity_text);
-      return item;
+  function normalizeTags(text) {
+    const tags = new Map();
+    text.split(',').forEach(value => {
+      const name = value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+      if (!name) return;
+      const slug = name.normalize('NFKD').replace(/\p{M}/gu, '').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '');
+      if (!slug) throw new Error(`Tag “${name}” needs at least one letter or number.`);
+      tags.set(slug, { name, slug });
     });
-    if (ingredients.some(item => !item.ingredient || (item.quantity_text && item.quantity === null))) {
-      $('form-status').textContent = 'Give each ingredient a name and use a number or fraction for its quantity, or leave the quantity blank.'; return;
+    return [...tags.values()];
+  }
+
+  // Stable IDs let retries recognize a previous insert whose response was lost.
+  async function insertOnce(table, row, keys = ['id']) {
+    const { error } = await client.from(table).insert(row);
+    if (!error) return;
+    if (error.code === '23505') {
+      let query = client.from(table).select(keys.join(','));
+      keys.forEach(key => { query = query.eq(key, row[key]); });
+      const { data, error: readError } = await query.maybeSingle();
+      if (!readError && data) return;
     }
-    const tags = [...new Map(field('tags').value.split(',').map(tag => tag.trim()).filter(Boolean).map(tag => [tag.toLowerCase(), tag])).values()];
-    const recipe = { id: nextId++, title, description: field('description').value.trim(), servings: Number(field('servings').value), prep_minutes: Number(field('prep_minutes').value), cook_minutes: Number(field('cook_minutes').value), favorite: field('favorite').checked, tags, source_url: safeUrl(field('source_url').value), video_url: safeUrl(field('video_url').value), photo, ingredients, instructions: field('instructions').value.trim(), last_made: null };
-    recipe.data_source = 'preview';
-    recipe.added_order = nextId;
-    recipes.push(recipe);
-    resetFilters(); $('sort').value = 'newest'; render(); $('editor').close();
-    $('status').textContent = `Added “${title}” to this tab's preview collection. Changes disappear on reload.`;
+    throw error;
+  }
+
+  async function saveRecipe(draft) {
+    const checkAccount = () => {
+      if (draft.userId !== activeUserId || draft.generation !== authGeneration || recovering) throw new Error('Your session changed. Sign in again before saving.');
+    };
+    checkAccount();
+    if (!draft.recipeSaved) {
+      draft.stage = 'Recipe save';
+      await insertOnce('recipes', draft.recipe);
+      draft.recipeSaved = true;
+    }
+    for (const ingredient of draft.ingredients) {
+      checkAccount(); draft.stage = 'Ingredient save';
+      if (draft.completed.has(ingredient.id)) continue;
+      await insertOnce('recipe_ingredients', ingredient);
+      draft.completed.add(ingredient.id);
+    }
+    for (const tag of draft.tags) {
+      checkAccount(); draft.stage = 'Tag save';
+      if (tag.linked) continue;
+      if (!tag.id) {
+        const lookup = () => client.from('tags').select('id').eq('slug', tag.slug).maybeSingle();
+        let { data, error } = await lookup();
+        if (error) throw error;
+        if (!data) {
+          const result = await client.from('tags').insert({ name: tag.name, slug: tag.slug }).select('id').single();
+          if (result.error?.code === '23505') {
+            ({ data, error } = await lookup());
+            if (error || !data) throw error || result.error;
+          } else {
+            if (result.error) throw result.error;
+            data = result.data;
+          }
+        }
+        tag.id = data.id;
+      }
+      checkAccount(); draft.stage = 'Recipe tag save';
+      await insertOnce('recipe_tags', { recipe_id: draft.recipe.id, tag_id: tag.id }, ['recipe_id', 'tag_id']);
+      tag.linked = true;
+    }
+    checkAccount();
+    if (draft.blob && !draft.uploaded) {
+      draft.stage = 'Photo upload';
+      // A unique path belongs only to this draft. Retrying replaces that same
+      // object if an earlier upload succeeded but its response was lost.
+      draft.imagePath ||= `${draft.userId}/${crypto.randomUUID()}.${draft.blob.type === 'image/webp' ? 'webp' : 'png'}`;
+      const { error } = await client.storage.from('recipe-images').upload(draft.imagePath, draft.blob, { contentType: draft.blob.type, upsert: true });
+      if (error) throw error;
+      draft.uploaded = true;
+    }
+    checkAccount();
+    if (draft.uploaded && !draft.imageSaved) {
+      draft.stage = 'Photo path save';
+      const { error } = await client.from('recipes').update({ image_path: draft.imagePath }).eq('id', draft.recipe.id).select('id').single();
+      if (error) throw error;
+      draft.imageSaved = true;
+    }
+    checkAccount();
+  }
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (savingRecipe || $('preview-submit').disabled) return;
+    if (!activeUserId || recovering) { $('form-status').textContent = 'Log in before saving a recipe.'; return; }
+    if (!saveDraft && !form.reportValidity()) return;
+    if (!saveDraft) {
+      const title = field('title').value.trim();
+      if (!title) { $('form-status').textContent = 'Enter a recipe title.'; field('title').focus(); return; }
+      for (const key of ['source_url', 'video_url']) {
+        if (field(key).value && !safeUrl(field(key).value)) { $('form-status').textContent = 'Recipe and video links must use http or https.'; field(key).focus(); return; }
+      }
+      if (reviewedText !== $('ingredient-paste').value) reviewIngredients();
+      const ingredients = Array.from($('ingredient-review').children, (row, index) => {
+        const item = { sort_order: index, grocery_section: 'Other' };
+        row.querySelectorAll('input').forEach(input => { item[input.dataset.key] = input.value.trim(); });
+        item.quantity = window.Ingredients.quantityValue(item.quantity_text);
+        return item;
+      });
+      if (ingredients.some(item => !item.ingredient || (item.quantity_text && item.quantity === null))) {
+        $('form-status').textContent = 'Give each ingredient a name and use a number or fraction for its quantity, or leave the quantity blank.'; return;
+      }
+      let tags;
+      try { tags = normalizeTags(field('tags').value); } catch (error) { $('form-status').textContent = error.message; return; }
+      const id = crypto.randomUUID();
+      const recipe = { id, title, description: field('description').value.trim(), servings: Number(field('servings').value), prep_minutes: field('prep_minutes').value === '' ? null : Number(field('prep_minutes').value), cook_minutes: field('cook_minutes').value === '' ? null : Number(field('cook_minutes').value), favorite: field('favorite').checked, source_url: safeUrl(field('source_url').value) || null, video_url: safeUrl(field('video_url').value) || null, instructions: field('instructions').value.trim(), image_path: null };
+      saveDraft = { userId: activeUserId, generation: authGeneration, recipe, tags, ingredients: ingredients.map(item => ({ ...item, id: crypto.randomUUID(), recipe_id: id })), blob: photoBlob, completed: new Set() };
+    }
+    const draft = saveDraft;
+    savingRecipe = true;
+    Array.from(form.elements).forEach(control => { control.disabled = true; });
+    $('form-status').textContent = 'Saving recipe…';
+    try {
+      await saveRecipe(draft);
+      draft.stage = 'Library reload';
+      selectedTag = ''; favoritesOnly = false; $('search').value = ''; $('sort').value = 'newest';
+      await loadRecipes({ savedId: draft.recipe.id });
+      if (draft.userId !== activeUserId || draft.generation !== authGeneration || recovering) return;
+      saveDraft = null;
+      $('editor').close();
+      $('status').textContent = `Saved “${draft.recipe.title}” successfully.`;
+    } catch (error) {
+      const message = `${draft.stage || 'Save'} failed: ${error.message}${error.code ? ` (code ${error.code})` : ''}. ${draft.recipeSaved ? `Recipe ${draft.recipe.id} has been created.` : 'Some steps may already be saved.'} Retry to finish this recipe without duplicating completed rows. Keep this tab open until saving finishes.`;
+      $('form-status').textContent = message;
+      if (!$('editor').open) $('status').textContent = message;
+    } finally {
+      savingRecipe = false;
+      Array.from(form.elements).forEach(control => { control.disabled = Boolean(saveDraft) && !control.hasAttribute('data-close') && control.type !== 'submit'; });
+      $('preview-submit').textContent = saveDraft ? 'Retry save' : 'Save recipe';
+    }
   });
   function resetFilters() { selectedTag = ''; favoritesOnly = false; $('search').value = ''; render(); }
   function navigate() {
@@ -438,6 +560,7 @@
   }
   ['add-recipe', 'empty-add'].forEach(id => $(id).addEventListener('click', openEditor));
   document.querySelectorAll('[data-close]').forEach(control => control.addEventListener('click', () => $(control.dataset.close).close()));
+  $('editor').addEventListener('cancel', event => { if (savingRecipe) event.preventDefault(); });
   $('editor').addEventListener('close', () => { photoVersion++; });
   $('parse').addEventListener('click', reviewIngredients);
   $('search').addEventListener('input', render);
@@ -445,7 +568,7 @@
   $('favorites').addEventListener('click', () => { favoritesOnly = !favoritesOnly; render(); });
   $('reset-filters').addEventListener('click', resetFilters);
   window.addEventListener('hashchange', navigate);
-  $('status').textContent = 'Demo mode · Recipes and photos stay in this tab until you reload.';
+  $('status').textContent = 'Demo recipes are labeled until your collection loads.';
   render(); navigate();
   if (recovering) {
     showRecovery(null);
