@@ -8,18 +8,31 @@
   <link rel="stylesheet" href="style.css">
   <script defer src="config.js"></script>
   <script defer src="ingredients.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
   <header class="site-header">
     <a class="brand" href="#recipes"><span class="brand-mark" aria-hidden="true">♧</span> Our Table<span class="brand-note">THE FAMILY COOKBOOK</span></a>
-    <nav aria-label="Main navigation">
+    <nav id="main-nav" aria-label="Main navigation" hidden>
       <a href="#recipes" aria-current="page">Recipes</a><a href="#planner">Weekly Planner</a><a href="#groceries">Grocery List</a><a href="#history">History</a>
     </nav>
+    <button type="button" id="logout" class="secondary" hidden>Log out</button>
   </header>
   <main>
-    <div id="status" class="status" role="status"></div>
-    <section id="library">
+    <section id="login" aria-labelledby="login-title" style="max-width:420px;margin:40px auto">
+      <p class="eyebrow">WELCOME TO OUR TABLE</p>
+      <h1 id="login-title">Household login</h1>
+      <p>Sign in with your shared household email and password.</p>
+      <form id="login-form">
+        <label>Email<input id="login-email" type="email" autocomplete="username" required></label>
+        <label>Password<input id="login-password" type="password" autocomplete="current-password" required></label>
+        <p id="login-status" role="status">Checking your session…</p>
+        <button id="login-submit" type="submit" class="primary" disabled>Log in</button>
+      </form>
+    </section>
+    <div id="status" class="status" role="status" hidden></div>
+    <section id="library" hidden>
       <div class="page-heading"><div><p class="eyebrow">GOOD FOOD. SHARED TOGETHER.</p><h1>A little inspiration<br>for your table.</h1><p class="subheading">The old favorites. The new discoveries. All in one place.</p></div><button class="primary" id="add-recipe">＋ Add recipe</button></div>
       <div class="toolbar"><label class="search"><span aria-hidden="true">⌕</span><input type="search" id="search" placeholder="Find a recipe, ingredient, or tag…" aria-label="Search recipes"></label><label class="sort">Sort by <select id="sort"><option value="newest">Recently added</option><option value="title">Recipe name</option><option value="quickest">Quickest first</option><option value="last">Last made</option></select></label></div>
       <div class="filter-row"><div id="tags" class="chips" aria-label="Filter recipes by tag"></div><button id="favorites" class="chip" aria-pressed="false">♡ Favorites</button></div>
@@ -33,7 +46,7 @@
   <dialog id="editor" aria-labelledby="editor-title">
     <form id="recipe-form">
       <div class="dialog-heading"><div><p class="eyebrow">MAKE ROOM FOR A NEW FAVORITE</p><h2 id="editor-title">Add a recipe</h2></div><button type="button" class="icon-button" data-close="editor" aria-label="Close recipe form">×</button></div>
-      <p class="notice">Preview mode · Recipes and photos stay in this tab until you reload. Database saving and image uploads await household authentication.</p>
+      <p class="notice">Preview mode · New recipes, favorite changes, and photos stay in this tab until you reload or log out. Database saving and image uploads are not enabled.</p>
       <label>Recipe title <input name="title" required maxlength="160" placeholder="What are we cooking?"></label>
       <label>Description <textarea name="description" rows="2" placeholder="A family favorite, a little backstory…"></textarea></label>
       <div class="form-three"><label>Servings<input name="servings" type="number" min="0.25" step="0.25" value="4" required></label><label>Prep minutes<input name="prep_minutes" type="number" min="0" step="1"></label><label>Cook minutes<input name="cook_minutes" type="number" min="0" step="1"></label></div>

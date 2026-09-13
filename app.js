@@ -18,40 +18,123 @@
   let photoVersion = 0;
   let reviewedText = null;
   recipes.forEach(recipe => { recipe.data_source = 'demo'; recipe.added_order = recipe.id; });
+  const demoRecipes = JSON.stringify(recipes);
+  let client;
+  let activeUserId;
+  let readController;
+  let authGeneration = 0;
 
-  async function loadRecipes() {
-    $('status').textContent = 'Loading Supabase recipes. Showing demo/preview data until reads finish.';
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+  function applySession(session) {
+    const userId = session?.user?.id || null;
+    if (userId === activeUserId) return;
+    activeUserId = userId;
+    const generation = ++authGeneration;
+    readController?.abort();
+    $('editor').close(); $('detail').close();
+    $('detail-content').replaceChildren();
+    form.reset(); photo = ''; photoVersion++;
+    $('photo-preview').removeAttribute('src'); $('photo-preview').hidden = true;
+    $('ingredient-review').replaceChildren(); reviewedText = null;
+    recipes.splice(0, recipes.length, ...JSON.parse(demoRecipes));
+    resetFilters();
+    $('login').hidden = Boolean(userId);
+    $('main-nav').hidden = !userId;
+    $('logout').hidden = !userId;
+    $('status').hidden = !userId;
+    $('login-password').value = '';
+    $('login-status').textContent = userId ? '' : 'Enter your household account credentials.';
+    if (userId) {
+      location.hash = 'recipes';
+      // Keep SDK requests outside the synchronous auth event callback.
+      setTimeout(() => { if (generation === authGeneration) loadRecipes(); }, 0);
+    } else {
+      $('status').textContent = '';
+    }
+    navigate();
+  }
+
+  async function initializeAuth() {
     try {
       const config = window.MEAL_CONFIG;
-      if (!config?.SUPABASE_URL || !config?.SUPABASE_PUBLISHABLE_KEY) {
-        throw new Error('Supabase configuration is missing.');
-      }
-      const base = new URL(config.SUPABASE_URL);
-      base.pathname = `${base.pathname.replace(/\/+$/, '').replace(/\/rest\/v1$/, '')}/rest/v1/`;
-      base.search = ''; base.hash = '';
-      // Publishable keys go in apikey, not in a Bearer JWT header.
-      // All database requests are GETs; editor and favorite changes remain local.
+      if (!config?.SUPABASE_URL || !config?.SUPABASE_PUBLISHABLE_KEY) throw new Error('Supabase configuration is missing.');
+      if (!window.supabase?.createClient) throw new Error('The login service could not load. Check your connection and reload.');
+      const projectUrl = new URL(config.SUPABASE_URL);
+      projectUrl.pathname = projectUrl.pathname.replace(/\/+$/, '').replace(/\/rest\/v1$/, '');
+      projectUrl.search = ''; projectUrl.hash = '';
+      client = window.supabase.createClient(projectUrl.href, config.SUPABASE_PUBLISHABLE_KEY, {
+        auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
+      });
+      client.auth.onAuthStateChange((_event, session) => applySession(session));
+      const generation = authGeneration;
+      const { data, error } = await client.auth.getSession();
+      if (error) throw error;
+      if (generation === authGeneration) applySession(data.session);
+      $('login-submit').disabled = false;
+    } catch (error) {
+      $('login-status').textContent = `${error.message} Reload to try again.`;
+    }
+  }
+
+  $('login-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!client || $('login-submit').disabled || !$('login-form').reportValidity()) return;
+    $('login-submit').disabled = true;
+    $('login-status').textContent = 'Signing in…';
+    try {
+      const { data, error } = await client.auth.signInWithPassword({
+        email: $('login-email').value.trim(), password: $('login-password').value
+      });
+      if (error) throw error;
+      applySession(data.session);
+    } catch (error) {
+      $('login-status').textContent = `Could not log in: ${error.message}`;
+    } finally {
+      $('login-password').value = '';
+      $('login-submit').disabled = false;
+    }
+  });
+  $('logout').addEventListener('click', async () => {
+    $('logout').disabled = true;
+    try {
+      const { error } = await client.auth.signOut({ scope: 'local' });
+      if (error) throw error;
+      applySession(null);
+      $('login-email').focus();
+    } catch (error) {
+      $('status').textContent = `Could not log out: ${error.message} Please try again.`;
+    } finally {
+      $('logout').disabled = false;
+    }
+  });
+
+  async function loadRecipes() {
+    if (!activeUserId) return;
+    const generation = authGeneration;
+    $('status').textContent = 'Loading Supabase recipes. Showing demo/preview data until reads finish.';
+    const controller = new AbortController();
+    readController?.abort();
+    readController = controller;
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      // The shared SDK client supplies and refreshes the authenticated token.
+      // Database operations remain SELECT-only.
       async function readTable(table, order) {
         const rows = [];
         for (;;) {
-          const url = new URL(table, base);
-          url.search = new URLSearchParams({ select: '*', order, limit: '1000', offset: String(rows.length) });
-          const response = await fetch(url, {
-            method: 'GET', headers: { apikey: config.SUPABASE_PUBLISHABLE_KEY, Accept: 'application/json' },
-            credentials: 'omit', signal: controller.signal
-          });
-          if (!response.ok) throw new Error(`Supabase ${table} read failed (HTTP ${response.status}).`);
-          const page = await response.json();
+          let query = client.from(table).select('*');
+          order.split(',').forEach(sort => { query = query.order(sort.split('.')[0], { ascending: true }); });
+          const { data: page, error } = await query.range(rows.length, rows.length + 999).abortSignal(controller.signal);
+          if (generation !== authGeneration) return [];
+          if (error) throw new Error(`Supabase ${table} read failed: ${error.message}`);
           if (!Array.isArray(page)) throw new Error(`Supabase ${table} returned an unexpected response.`);
           if (!page.length) return rows;
           rows.push(...page);
         }
       }
       const rows = await readTable('recipes', 'id.asc');
+      if (generation !== authGeneration) return;
       if (!rows.length) {
-        $('status').textContent = 'Demo/preview data · Supabase returned no visible recipes. The table may be empty or RLS may block anonymous reads. Changes stay in this tab only.';
+        $('status').textContent = 'Demo/preview data · No recipes are visible to this household account. The table may be empty or access may be restricted by RLS. Changes stay in this tab only.';
         return;
       }
       const [recipeTags, tags, ingredients] = await Promise.all([
@@ -59,6 +142,7 @@
         readTable('tags', 'id.asc'),
         readTable('recipe_ingredients', 'recipe_id.asc,sort_order.asc,id.asc')
       ]);
+      if (generation !== authGeneration) return;
       const tagNames = new Map(tags.map(tag => [tag.id, tag.name]));
       const loaded = rows.map(row => ({
         ...row,
@@ -82,8 +166,9 @@
       recipes.splice(0, recipes.length, ...loaded, ...previews);
       selectedTag = '';
       render();
-      $('status').textContent = `Loaded ${loaded.length} Supabase recipes (read only). Tags and ingredients reflect anonymous visibility. New recipes and favorite changes are preview-only and disappear on reload.`;
+      $('status').textContent = `Loaded ${loaded.length} Supabase recipes (read only). Tags and ingredients reflect household access. New recipes and favorite changes are preview-only and disappear on reload or logout.`;
     } catch (error) {
+      if (generation !== authGeneration) return;
       $('status').textContent = `Demo/preview data · ${error.name === 'AbortError' ? 'Supabase reads timed out.' : error.message} Local recipes remain available; nothing is saved to the database.`;
     } finally {
       clearTimeout(timeout);
@@ -280,6 +365,7 @@
   });
   function resetFilters() { selectedTag = ''; favoritesOnly = false; $('search').value = ''; render(); }
   function navigate() {
+    if (!activeUserId) { $('library').hidden = true; $('upcoming').hidden = true; return; }
     const page = location.hash.slice(1);
     const upcoming = { planner: ['Weekly Planner', 'Meal planning is coming soon. Explore the recipe library in the meantime.'], groceries: ['Grocery List', 'Grocery lists are coming soon. Your demo recipes are ready to explore.'], history: ['History', 'Cooking history is coming soon. Demo last-made dates appear on recipe cards.'] };
     const destination = upcoming[page];
@@ -301,5 +387,5 @@
   window.addEventListener('hashchange', navigate);
   $('status').textContent = 'Demo mode · Recipes and photos stay in this tab until you reload.';
   render(); navigate();
-  loadRecipes();
+  initializeAuth();
 })();
