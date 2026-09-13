@@ -87,6 +87,7 @@
       if (error) throw error;
       applySession(data.session);
     } catch (error) {
+      console.error('Supabase signInWithPassword failed:', error);
       $('login-status').textContent = `Could not log in: ${error.message}`;
     } finally {
       $('login-password').value = '';
