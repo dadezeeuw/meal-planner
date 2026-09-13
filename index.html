@@ -23,12 +23,18 @@
     <section id="login" aria-labelledby="login-title" style="max-width:420px;margin:40px auto">
       <p class="eyebrow">WELCOME TO OUR TABLE</p>
       <h1 id="login-title">Household login</h1>
-      <p>Sign in with your shared household email and password.</p>
+      <p id="login-description">Sign in with your shared household email and password.</p>
       <form id="login-form">
         <label>Email<input id="login-email" type="email" autocomplete="username" required></label>
         <label>Password<input id="login-password" type="password" autocomplete="current-password" required></label>
         <p id="login-status" role="status">Checking your session…</p>
         <button id="login-submit" type="submit" class="primary" disabled>Log in</button>
+      </form>
+      <form id="recovery-form" hidden>
+        <label>New password<input id="new-password" type="password" autocomplete="new-password" required></label>
+        <label>Confirm new password<input id="confirm-password" type="password" autocomplete="new-password" required></label>
+        <p id="recovery-status" role="status"></p>
+        <button id="recovery-submit" type="submit" class="primary" disabled>Set new password</button>
       </form>
     </section>
     <div id="status" class="status" role="status" hidden></div>

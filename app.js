@@ -23,8 +23,30 @@
   let activeUserId;
   let readController;
   let authGeneration = 0;
+  const recoveryParams = new URLSearchParams(location.hash.slice(1));
+  let recovering = recoveryParams.get('type') === 'recovery' || location.hash === '#password-recovery';
+  let recoverySession = null;
+  let recoverySaving = false;
+
+  function showRecovery(session) {
+    recoverySession = session;
+    ++authGeneration;
+    readController?.abort();
+    $('editor').close(); $('detail').close();
+    $('login').hidden = false;
+    $('login-form').hidden = true;
+    $('recovery-form').hidden = false;
+    $('login-title').textContent = 'Set new password';
+    $('login-description').textContent = 'Choose a new password for your household account.';
+    ['library', 'upcoming', 'main-nav', 'logout', 'status'].forEach(id => { $(id).hidden = true; });
+    $('recovery-submit').disabled = !session || recoverySaving;
+    if (!session) $('recovery-status').textContent = 'No valid recovery session. Open a fresh password recovery link.';
+    // Keep recovery mode on reload without retaining tokens in the URL.
+    if (session) history.replaceState(null, '', `${location.pathname}${location.search}#password-recovery`);
+  }
 
   function applySession(session) {
+    if (recovering) { showRecovery(session); return; }
     const userId = session?.user?.id || null;
     if (userId === activeUserId) return;
     activeUserId = userId;
@@ -62,18 +84,54 @@
       projectUrl.pathname = projectUrl.pathname.replace(/\/+$/, '').replace(/\/rest\/v1$/, '');
       projectUrl.search = ''; projectUrl.hash = '';
       client = window.supabase.createClient(projectUrl.href, config.SUPABASE_PUBLISHABLE_KEY, {
-        auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
+        auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
       });
-      client.auth.onAuthStateChange((_event, session) => applySession(session));
+      client.auth.onAuthStateChange((event, session) => {
+        if (event === 'PASSWORD_RECOVERY') recovering = true;
+        applySession(session);
+      });
       const generation = authGeneration;
       const { data, error } = await client.auth.getSession();
       if (error) throw error;
       if (generation === authGeneration) applySession(data.session);
       $('login-submit').disabled = false;
     } catch (error) {
-      $('login-status').textContent = `${error.message} Reload to try again.`;
+      $(recovering ? 'recovery-status' : 'login-status').textContent = `${error.message} Reload to try again.`;
     }
   }
+
+  $('recovery-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!client || !recoverySession || $('recovery-submit').disabled || !$('recovery-form').reportValidity()) return;
+    const password = $('new-password').value;
+    if (password !== $('confirm-password').value) {
+      $('recovery-status').textContent = 'Passwords do not match.';
+      $('confirm-password').focus();
+      return;
+    }
+    recoverySaving = true;
+    $('recovery-submit').disabled = true;
+    $('recovery-status').textContent = 'Saving new password…';
+    const session = recoverySession;
+    try {
+      const { error } = await client.auth.updateUser({ password });
+      if (error) throw error;
+      if (!recoverySession || recoverySession.user.id !== session.user.id) return;
+      const currentSession = recoverySession;
+      recovering = false; recoverySession = null;
+      $('recovery-form').reset(); $('recovery-form').hidden = true;
+      $('login-form').hidden = false;
+      $('login-title').textContent = 'Household login';
+      $('login-description').textContent = 'Sign in with your shared household email and password.';
+      activeUserId = undefined;
+      applySession(currentSession);
+    } catch (error) {
+      $('recovery-status').textContent = error.message;
+    } finally {
+      recoverySaving = false;
+      $('recovery-submit').disabled = !recoverySession;
+    }
+  });
 
   $('login-form').addEventListener('submit', async event => {
     event.preventDefault();
@@ -366,6 +424,7 @@
   });
   function resetFilters() { selectedTag = ''; favoritesOnly = false; $('search').value = ''; render(); }
   function navigate() {
+    if (recovering) { $('library').hidden = true; $('upcoming').hidden = true; return; }
     if (!activeUserId) { $('library').hidden = true; $('upcoming').hidden = true; return; }
     const page = location.hash.slice(1);
     const upcoming = { planner: ['Weekly Planner', 'Meal planning is coming soon. Explore the recipe library in the meantime.'], groceries: ['Grocery List', 'Grocery lists are coming soon. Your demo recipes are ready to explore.'], history: ['History', 'Cooking history is coming soon. Demo last-made dates appear on recipe cards.'] };
@@ -388,5 +447,9 @@
   window.addEventListener('hashchange', navigate);
   $('status').textContent = 'Demo mode · Recipes and photos stay in this tab until you reload.';
   render(); navigate();
+  if (recovering) {
+    showRecovery(null);
+    $('recovery-status').textContent = 'Checking your recovery session…';
+  }
   initializeAuth();
 })();
