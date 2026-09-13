@@ -17,6 +17,78 @@
   let photo = '';
   let photoVersion = 0;
   let reviewedText = null;
+  recipes.forEach(recipe => { recipe.data_source = 'demo'; recipe.added_order = recipe.id; });
+
+  async function loadRecipes() {
+    $('status').textContent = 'Loading Supabase recipes. Showing demo/preview data until reads finish.';
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const config = window.MEAL_CONFIG;
+      if (!config?.SUPABASE_URL || !config?.SUPABASE_PUBLISHABLE_KEY) {
+        throw new Error('Supabase configuration is missing.');
+      }
+      const base = new URL(config.SUPABASE_URL);
+      base.pathname = `${base.pathname.replace(/\/+$/, '').replace(/\/rest\/v1$/, '')}/rest/v1/`;
+      base.search = ''; base.hash = '';
+      // Publishable keys go in apikey, not in a Bearer JWT header.
+      // All database requests are GETs; editor and favorite changes remain local.
+      async function readTable(table, order) {
+        const rows = [];
+        for (;;) {
+          const url = new URL(table, base);
+          url.search = new URLSearchParams({ select: '*', order, limit: '1000', offset: String(rows.length) });
+          const response = await fetch(url, {
+            method: 'GET', headers: { apikey: config.SUPABASE_PUBLISHABLE_KEY, Accept: 'application/json' },
+            credentials: 'omit', signal: controller.signal
+          });
+          if (!response.ok) throw new Error(`Supabase ${table} read failed (HTTP ${response.status}).`);
+          const page = await response.json();
+          if (!Array.isArray(page)) throw new Error(`Supabase ${table} returned an unexpected response.`);
+          if (!page.length) return rows;
+          rows.push(...page);
+        }
+      }
+      const rows = await readTable('recipes', 'id.asc');
+      if (!rows.length) {
+        $('status').textContent = 'Demo/preview data · Supabase returned no visible recipes. The table may be empty or RLS may block anonymous reads. Changes stay in this tab only.';
+        return;
+      }
+      const [recipeTags, tags, ingredients] = await Promise.all([
+        readTable('recipe_tags', 'recipe_id.asc,tag_id.asc'),
+        readTable('tags', 'id.asc'),
+        readTable('recipe_ingredients', 'recipe_id.asc,sort_order.asc,id.asc')
+      ]);
+      const tagNames = new Map(tags.map(tag => [tag.id, tag.name]));
+      const loaded = rows.map(row => ({
+        ...row,
+        data_source: 'supabase',
+        title: String(row.title || 'Untitled recipe'),
+        description: String(row.description || ''),
+        servings: Number(row.servings ?? 4),
+        prep_minutes: Number(row.prep_minutes || 0),
+        cook_minutes: Number(row.cook_minutes || 0),
+        favorite: Boolean(row.favorite ?? row.is_favorite),
+        last_made: row.last_made ?? row.last_made_at ?? null,
+        photo: safeUrl(row.photo_url || row.image_url || row.photo),
+        instructions: String(row.instructions || ''),
+        tags: [...new Set(recipeTags.filter(link => link.recipe_id === row.id).map(link => tagNames.get(link.tag_id)).filter(Boolean))],
+        ingredients: ingredients.filter(item => item.recipe_id === row.id)
+          .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+          .map(item => ({ ...item, quantity_text: item.quantity_text ?? String(item.quantity ?? ''), ingredient: item.ingredient ?? item.name ?? '', unit: item.unit ?? '', preparation: item.preparation ?? '' }))
+      }));
+      // Preserve anything added to the preview while the requests were pending.
+      const previews = recipes.filter(recipe => recipe.data_source === 'preview');
+      recipes.splice(0, recipes.length, ...loaded, ...previews);
+      selectedTag = '';
+      render();
+      $('status').textContent = `Loaded ${loaded.length} Supabase recipes (read only). Tags and ingredients reflect anonymous visibility. New recipes and favorite changes are preview-only and disappear on reload.`;
+    } catch (error) {
+      $('status').textContent = `Demo/preview data · ${error.name === 'AbortError' ? 'Supabase reads timed out.' : error.message} Local recipes remain available; nothing is saved to the database.`;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
   // Recipe content is inserted as text, never interpreted as HTML.
   function node(tag, className, text) {
@@ -34,6 +106,7 @@
   const duration = recipe => recipe.prep_minutes + recipe.cook_minutes;
   function tagsFor(recipe) {
     const tags = node('div', 'card-tags');
+    if (recipe.data_source !== 'supabase') tags.append(node('span', 'tag', recipe.data_source === 'demo' ? 'Demo / preview' : 'Local preview'));
     recipe.tags.forEach(tag => tags.append(node('span', 'tag', tag)));
     return tags;
   }
@@ -45,7 +118,7 @@
       [recipe.title, recipe.description, ...recipe.tags, ...recipe.ingredients.map(item => item.ingredient)].join(' ').toLowerCase().includes(query)
     );
     const sorts = {
-      newest: (a, b) => b.id - a.id,
+      newest: (a, b) => (b.added_order || 0) - (a.added_order || 0) || (b.created_at || '').localeCompare(a.created_at || ''),
       title: (a, b) => a.title.localeCompare(b.title),
       quickest: (a, b) => duration(a) - duration(b),
       last: (a, b) => (b.last_made || '').localeCompare(a.last_made || '')
@@ -199,6 +272,8 @@
     }
     const tags = [...new Map(field('tags').value.split(',').map(tag => tag.trim()).filter(Boolean).map(tag => [tag.toLowerCase(), tag])).values()];
     const recipe = { id: nextId++, title, description: field('description').value.trim(), servings: Number(field('servings').value), prep_minutes: Number(field('prep_minutes').value), cook_minutes: Number(field('cook_minutes').value), favorite: field('favorite').checked, tags, source_url: safeUrl(field('source_url').value), video_url: safeUrl(field('video_url').value), photo, ingredients, instructions: field('instructions').value.trim(), last_made: null };
+    recipe.data_source = 'preview';
+    recipe.added_order = nextId;
     recipes.push(recipe);
     resetFilters(); $('sort').value = 'newest'; render(); $('editor').close();
     $('status').textContent = `Added “${title}” to this tab's preview collection. Changes disappear on reload.`;
@@ -226,4 +301,5 @@
   window.addEventListener('hashchange', navigate);
   $('status').textContent = 'Demo mode · Recipes and photos stay in this tab until you reload.';
   render(); navigate();
+  loadRecipes();
 })();
