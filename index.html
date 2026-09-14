@@ -10,6 +10,7 @@
   <script defer src="ingredients.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script defer src="planner.js"></script>
+  <script defer src="groceries.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
@@ -55,6 +56,12 @@
       <p id="planner-status" role="status"></p><button type="button" id="planner-retry" class="secondary" hidden>Retry loading week</button>
       <div id="week-grid" class="week-grid"></div>
     </section>
+    <section id="groceries" hidden aria-labelledby="grocery-title">
+      <div class="page-heading"><div><p class="eyebrow">FROM OUR TABLE TO YOUR BASKET</p><h1 id="grocery-title">A little list.<br>A week of good food.</h1></div><div class="grocery-actions"><button type="button" id="generate-groceries" class="primary">Generate grocery list</button><button type="button" id="add-grocery" class="secondary">Add item</button></div></div>
+      <div class="week-toolbar"><div class="week-navigation"><button type="button" id="grocery-previous" class="secondary" aria-label="Previous grocery week">←</button><button type="button" id="grocery-current" class="secondary">This week</button><button type="button" id="grocery-next" class="secondary" aria-label="Next grocery week">→</button></div><h2 id="grocery-week"></h2></div>
+      <p id="grocery-status" role="status"></p><button type="button" id="grocery-retry" class="secondary" hidden>Retry loading list</button>
+      <div id="grocery-sections"></div>
+    </section>
     <footer>Made for everyday meals &amp; the people you love.<span>OUR TABLE</span></footer>
   </main>
   <dialog id="editor" aria-labelledby="editor-title">
@@ -88,6 +95,18 @@
       <label>Servings<input id="meal-servings" type="number" min="0.25" step="0.25"><small>Optional for custom meals.</small></label>
       <p id="meal-status" role="status"></p>
       <div class="form-actions"><button type="button" id="meal-cancel" class="secondary">Cancel</button><button type="submit" id="meal-save" class="primary">Save meal</button></div>
+    </form>
+  </dialog>
+  <dialog id="grocery-editor" aria-labelledby="grocery-editor-title">
+    <form id="grocery-form">
+      <div class="dialog-heading"><h2 id="grocery-editor-title">Add grocery item</h2><button type="button" id="grocery-close" class="icon-button" aria-label="Close grocery editor">×</button></div>
+      <label>Item<input id="grocery-name" required maxlength="300" placeholder="What do we need?"></label>
+      <div class="form-two"><label>Quantity<input id="grocery-quantity" placeholder="2, 1/2, or to taste"></label><label>Unit<input id="grocery-unit" placeholder="cups, tbsp, lb…"></label></div>
+      <label>Section<select id="grocery-section"></select></label>
+      <label>Notes<textarea id="grocery-notes" rows="3"></textarea></label>
+      <label class="check-label"><input id="grocery-checked" type="checkbox"> Already in the basket</label>
+      <p id="grocery-form-status" role="status"></p>
+      <div class="form-actions"><button type="button" id="grocery-cancel" class="secondary">Cancel</button><button type="submit" id="grocery-save" class="primary">Save item</button></div>
     </form>
   </dialog>
 </body>

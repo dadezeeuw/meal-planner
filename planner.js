@@ -271,6 +271,12 @@
   for (const id of ['meal-close', 'meal-cancel']) $(id).addEventListener('click', () => { if (!busy) $('meal-editor').close(); });
   $('meal-editor').addEventListener('cancel', event => { if (busy) event.preventDefault(); });
   window.MealPlanner = {
+    getWeek() { return selectedWeek; },
+    selectWeek(week) {
+      if (busy || copyJob) return false;
+      selectedWeek = monday(week); ready = false;
+      return true;
+    },
     initialize(value) { client = value; },
     setSession(value) {
       if (value === userId) return;

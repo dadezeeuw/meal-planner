@@ -105,6 +105,7 @@
   function showRecovery(session) {
     historyRequest++; $('history-warning').hidden = true;
     window.MealPlanner.setSession(null);
+    window.Groceries.setSession(null);
     recoverySession = session;
     ++authGeneration;
     readController?.abort();
@@ -128,6 +129,7 @@
     activeUserId = userId;
     historyRequest++; $('history-warning').hidden = true;
     window.MealPlanner.setSession(userId);
+    window.Groceries.setSession(userId);
     const generation = ++authGeneration;
     readController?.abort();
     $('editor').close(); $('detail').close();
@@ -168,6 +170,7 @@
         auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
       });
       window.MealPlanner.initialize(client);
+      window.Groceries.initialize(client);
       client.auth.onAuthStateChange((event, session) => {
         if (event === 'PASSWORD_RECOVERY') recovering = true;
         applySession(session);
@@ -783,15 +786,17 @@
     previousView = view;
     const plannerVisible = !recovering && Boolean(activeUserId) && location.hash === '#planner';
     window.MealPlanner.show(plannerVisible);
+    const groceriesVisible = !recovering && Boolean(activeUserId) && location.hash === '#groceries';
+    window.Groceries.show(groceriesVisible);
     if (recovering) { $('library').hidden = true; $('upcoming').hidden = true; return; }
     if (!activeUserId) { $('library').hidden = true; $('upcoming').hidden = true; return; }
     const page = location.hash.slice(1);
-    const upcoming = { groceries: ['Grocery List', 'Grocery lists are coming soon. Your recipes are ready to explore.'], history: ['History', 'Cooking history is coming soon.'] };
+    const upcoming = { history: ['History', 'Cooking history is coming soon.'] };
     const destination = upcoming[page];
-    $('library').hidden = Boolean(destination) || plannerVisible; $('upcoming').hidden = !destination;
+    $('library').hidden = Boolean(destination) || plannerVisible || groceriesVisible; $('upcoming').hidden = !destination;
     if (destination) { $('upcoming-title').textContent = destination[0]; $('upcoming-description').textContent = destination[1]; }
     document.querySelectorAll('nav a').forEach(link => {
-      if (link.hash === `#${destination || plannerVisible ? page : 'recipes'}`) link.setAttribute('aria-current', 'page');
+      if (link.hash === `#${destination || plannerVisible || groceriesVisible ? page : 'recipes'}`) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     });
   }
