@@ -60,6 +60,7 @@
       <label>Tags <input name="tags" placeholder="Dinner, Italian, Quick"><small>Separate tags with commas. These become your library filters.</small></label>
       <div class="form-two"><label>Source URL <input name="source_url" type="url" placeholder="https://…"></label><label>Video URL <input name="video_url" type="url" placeholder="https://…"></label></div>
       <label class="upload">Recipe photo<input id="photo" type="file" accept="image/jpeg,image/png,image/webp"><small>Choose a JPG, PNG, or WebP (up to 20 MB). Photos are resized and compressed before upload.</small><img id="photo-preview" alt="Selected recipe photo" hidden></label>
+      <button type="button" id="remove-photo" class="secondary" hidden>Remove photo</button>
       <label>Ingredients <textarea id="ingredient-paste" rows="6" placeholder="2 tbsp olive oil&#10;1 large yellow onion, diced&#10;3 cloves garlic, minced&#10;1.5 lb chicken thighs&#10;1/2 tsp kosher salt"></textarea></label>
       <button type="button" class="secondary" id="parse">Review ingredients</button><p class="field-hint">One ingredient per line. Review the quantities and names before saving.</p>
       <div id="ingredient-review"></div>

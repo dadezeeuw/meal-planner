@@ -58,6 +58,7 @@
     $('detail-content').replaceChildren();
     form.reset(); photo = ''; photoVersion++;
     saveDraft = null; photoBlob = null;
+    $('remove-photo').hidden = true;
     $('photo-preview').removeAttribute('src'); $('photo-preview').hidden = true;
     $('ingredient-review').replaceChildren(); reviewedText = null;
     recipes.splice(0, recipes.length, ...JSON.parse(demoRecipes));
@@ -359,6 +360,7 @@
     if (saveDraft) { $('editor').showModal(); return; }
     Array.from(form.elements).forEach(control => { control.disabled = false; });
     photoBlob = null;
+    $('remove-photo').hidden = true;
     form.reset(); photo = ''; photoVersion++; reviewedText = null;
     $('photo-preview').hidden = true; $('photo-preview').removeAttribute('src');
     $('ingredient-review').replaceChildren(); $('form-status').textContent = '';
@@ -379,14 +381,36 @@
       $('ingredient-review').append(row);
     });
   }
+  $('remove-photo').addEventListener('click', () => {
+    if (savingRecipe) return;
+    // Invalidate decoding/compression that may still be running.
+    photoVersion++;
+    $('photo').value = '';
+    photo = ''; photoBlob = null;
+    $('photo-preview').removeAttribute('src'); $('photo-preview').hidden = true;
+    $('remove-photo').hidden = true;
+    if (saveDraft) {
+      // Keep all recipe/ingredient/tag progress. Clear even an image-path
+      // update whose response was lost, using the existing recipe ID.
+      saveDraft.clearImage = saveDraft.clearImage || Boolean(saveDraft.imagePath);
+      saveDraft.blob = null;
+      saveDraft.imagePath = null;
+      saveDraft.uploaded = false;
+      saveDraft.imageSaved = false;
+      saveDraft.recipe.image_path = null;
+    }
+    $('preview-submit').disabled = false;
+    $('form-status').textContent = saveDraft ? 'Photo removed. Retry save to finish the existing recipe without an image.' : 'Photo removed. You can save without an image.';
+  });
   $('photo').addEventListener('change', async () => {
     const version = ++photoVersion;
     photo = ''; photoBlob = null; $('photo-preview').hidden = true; $('photo-preview').removeAttribute('src');
     $('form-status').textContent = ''; $('preview-submit').disabled = false;
     const file = $('photo').files[0];
+    $('remove-photo').hidden = !file;
     if (!file) return;
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 20 * 1024 * 1024) {
-      $('form-status').textContent = 'Choose a JPG, PNG, or WebP photo no larger than 20 MB.'; $('photo').value = ''; return;
+      $('form-status').textContent = 'Choose a JPG, PNG, or WebP photo no larger than 20 MB.'; $('photo').value = ''; $('remove-photo').hidden = true; return;
     }
     $('preview-submit').disabled = true;
     const url = URL.createObjectURL(file);
@@ -399,12 +423,12 @@
       canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
       const compressed = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', 0.85));
       if (version !== photoVersion) return;
-      if (!compressed) throw new Error('Photo compression failed.');
+      if (!compressed || !['image/jpeg', 'image/png', 'image/webp'].includes(compressed.type)) throw new Error('Photo compression failed.');
       photoBlob = compressed;
       photo = canvas.toDataURL('image/webp', 0.85);
       $('photo-preview').src = photo; $('photo-preview').hidden = false;
     } catch {
-      if (version === photoVersion) { $('form-status').textContent = 'This photo could not be opened. Choose another image.'; $('photo').value = ''; }
+      if (version === photoVersion) { photo = ''; photoBlob = null; $('form-status').textContent = 'This photo could not be opened. Choose another image.'; $('photo').value = ''; $('remove-photo').hidden = true; }
     } finally {
       URL.revokeObjectURL(url);
       if (version === photoVersion) $('preview-submit').disabled = false;
@@ -479,17 +503,20 @@
       draft.stage = 'Photo upload';
       // A unique path belongs only to this draft. Retrying replaces that same
       // object if an earlier upload succeeded but its response was lost.
-      draft.imagePath ||= `${draft.userId}/${crypto.randomUUID()}.${draft.blob.type === 'image/webp' ? 'webp' : 'png'}`;
+      const extension = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[draft.blob.type];
+      if (!extension) throw new Error('Unsupported compressed photo format. Remove the photo and choose a JPG, PNG, or WebP.');
+      draft.imagePath ||= `${draft.userId}/${crypto.randomUUID()}.${extension}`;
       const { error } = await client.storage.from('recipe-images').upload(draft.imagePath, draft.blob, { contentType: draft.blob.type, upsert: true });
       if (error) throw error;
       draft.uploaded = true;
     }
     checkAccount();
-    if (draft.uploaded && !draft.imageSaved) {
+    if (draft.clearImage || (draft.uploaded && !draft.imageSaved)) {
       draft.stage = 'Photo path save';
-      const { error } = await client.from('recipes').update({ image_path: draft.imagePath }).eq('id', draft.recipe.id).select('id').single();
+      const { error } = await client.from('recipes').update({ image_path: draft.clearImage ? null : draft.imagePath }).eq('id', draft.recipe.id).select('id').single();
       if (error) throw error;
       draft.imageSaved = true;
+      draft.clearImage = false;
     }
     checkAccount();
   }
@@ -540,7 +567,7 @@
       if (!$('editor').open) $('status').textContent = message;
     } finally {
       savingRecipe = false;
-      Array.from(form.elements).forEach(control => { control.disabled = Boolean(saveDraft) && !control.hasAttribute('data-close') && control.type !== 'submit'; });
+      Array.from(form.elements).forEach(control => { control.disabled = Boolean(saveDraft) && control.id !== 'remove-photo' && !control.hasAttribute('data-close') && control.type !== 'submit'; });
       $('preview-submit').textContent = saveDraft ? 'Retry save' : 'Save recipe';
     }
   });
