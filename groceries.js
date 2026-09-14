@@ -294,6 +294,7 @@
   for (const id of ['grocery-close', 'grocery-cancel']) $(id).addEventListener('click', () => { if (!busy) $('grocery-editor').close(); });
   $('grocery-editor').addEventListener('cancel', event => { if (busy) event.preventDefault(); });
   window.Groceries = {
+    normalizeIngredient: ingredientName,
     initialize(value) { client = value; },
     setSession(value) {
       if (value === userId) return;

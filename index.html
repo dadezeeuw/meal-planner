@@ -11,6 +11,7 @@
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script defer src="planner.js"></script>
   <script defer src="groceries.js"></script>
+  <script defer src="suggestions.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
@@ -45,7 +46,15 @@
       <div class="page-heading"><div><p class="eyebrow">GOOD FOOD. SHARED TOGETHER.</p><h1>A little inspiration<br>for your table.</h1><p class="subheading">The old favorites. The new discoveries. All in one place.</p></div><button class="primary" id="add-recipe">＋ Add recipe</button></div>
       <div class="toolbar"><label class="search"><span aria-hidden="true">⌕</span><input type="search" id="search" placeholder="Find a recipe, ingredient, or tag…" aria-label="Search recipes"></label><label class="sort">Sort by <select id="sort"><option value="newest">Recently added</option><option value="title">Recipe name</option><option value="quickest">Quickest first</option><option value="least_recent">Least recently made</option><option value="last">Most recently made</option><option value="most_made">Most made</option><option value="least_made">Least made</option></select></label></div>
       <div class="filter-row"><div id="tags" class="chips" aria-label="Filter recipes by tag"></div><button id="favorites" class="chip" aria-pressed="false">♡ Favorites</button></div>
-      <div class="collection-heading"><h2>Your recipe collection</h2><span id="count"></span></div>
+      <section class="smart-panel" aria-labelledby="smart-title">
+        <h2 id="smart-title">A little help choosing</h2>
+        <div class="chips" id="smart-shortcuts"><button type="button" class="chip" data-smart="recent" aria-pressed="false">Haven’t had lately</button><button type="button" class="chip" data-smart="never" aria-pressed="false">Never made</button><button type="button" class="chip" data-smart="similar" aria-pressed="false">Use similar ingredients</button><button type="button" class="chip" data-smart="week" aria-pressed="false">Use this week’s ingredients</button><button type="button" class="chip" data-smart="groceries" aria-pressed="false">Works with this week’s groceries</button><button type="button" class="chip" data-smart="dinner" aria-pressed="false">Suggest a dinner</button><button type="button" class="chip" data-smart="" aria-pressed="true">All recipes</button></div>
+        <label id="smart-anchor-label" hidden>Compare with recipe<select id="smart-anchor"><option value="">Choose an anchor recipe</option></select></label>
+        <label class="smart-include"><input id="smart-include" type="checkbox"> Include recipes already planned this week</label>
+        <p class="field-hint">Use the tags above to filter by meal, cuisine, or season. Suggestions use the planner’s selected week.</p>
+        <p id="smart-status" class="field-hint" role="status"></p><button id="smart-retry" type="button" class="secondary" hidden>Refresh suggestions</button>
+      </section>
+      <div class="collection-heading"><h2 id="collection-title">Your recipe collection</h2><span id="count"></span></div>
       <div id="recipe-grid" class="recipe-grid"></div>
       <div id="empty" class="empty" hidden><span aria-hidden="true">♧</span><h2>Your next favorite starts here.</h2><p id="empty-message"></p><button class="primary" id="empty-add">＋ Add recipe</button><button id="reset-filters" class="secondary">Clear filters</button></div>
     </section>

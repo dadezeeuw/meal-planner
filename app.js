@@ -106,6 +106,7 @@
     historyRequest++; $('history-warning').hidden = true;
     window.MealPlanner.setSession(null);
     window.Groceries.setSession(null);
+    window.SmartSuggestions.setSession(null);
     recoverySession = session;
     ++authGeneration;
     readController?.abort();
@@ -130,6 +131,7 @@
     historyRequest++; $('history-warning').hidden = true;
     window.MealPlanner.setSession(userId);
     window.Groceries.setSession(userId);
+    window.SmartSuggestions.setSession(userId);
     const generation = ++authGeneration;
     readController?.abort();
     $('editor').close(); $('detail').close();
@@ -171,6 +173,12 @@
       });
       window.MealPlanner.initialize(client);
       window.Groceries.initialize(client);
+      window.SmartSuggestions.initialize(client, async () => {
+        if (!recipes.some(recipe => recipe.data_source === 'supabase')) await loadRecipes();
+        const saved = recipes.filter(recipe => recipe.data_source === 'supabase');
+        if (saved.length) await loadMealHistory(saved);
+        return saved;
+      }, render, historyLabel);
       client.auth.onAuthStateChange((event, session) => {
         if (event === 'PASSWORD_RECOVERY') recovering = true;
         applySession(session);
@@ -346,8 +354,9 @@
     return tags;
   }
   function render() {
+    window.SmartSuggestions.setRecipes(recipes.filter(recipe => recipe.data_source === 'supabase'));
     const query = $('search').value.trim().toLowerCase();
-    const visible = recipes.filter(recipe =>
+    let visible = recipes.filter(recipe =>
       (!favoritesOnly || recipe.favorite) &&
       (!selectedTag || recipe.tags.includes(selectedTag)) &&
       [recipe.title, recipe.description, ...recipe.tags, ...recipe.ingredients.map(item => item.ingredient)].join(' ').toLowerCase().includes(query)
@@ -362,6 +371,8 @@
       least_made: (a, b) => compareHistory(a, b, 'least_made')
     };
     visible.sort(sorts[$('sort').value] || sorts.newest);
+    visible = window.SmartSuggestions.filter(visible);
+    $('collection-title').textContent = window.SmartSuggestions.active() ? 'Suggestions for your table' : 'Your recipe collection';
     $('tags').replaceChildren();
     ['', ...new Set(recipes.flatMap(recipe => recipe.tags).sort((a, b) => a.localeCompare(b)))].forEach(tag => {
       const chip = button(tag || 'All recipes', 'chip', () => { selectedTag = tag; render(); });
@@ -387,6 +398,8 @@
       const meta = node('div', 'card-meta');
       meta.append(node('span', '', `${duration(recipe)} min · ${recipe.servings} servings`), node('span', '', historyLabel(recipe)));
       copy.append(node('h3', '', recipe.title), tagsFor(recipe), meta);
+      const reason = window.SmartSuggestions.reason(recipe.id);
+      if (reason) copy.append(node('p', 'smart-reason', reason));
       open.append(picture, copy);
       const favorite = button(recipe.favorite ? '♥' : '♡', 'favorite-mark', () => toggleFavorite(recipe));
       favorite.disabled = recipe.data_source !== 'supabase' || busyRecipes.has(recipe.id);
@@ -777,9 +790,10 @@
       $('preview-submit').textContent = saveDraft ? 'Retry save' : 'Save recipe';
     }
   });
-  function resetFilters() { selectedTag = ''; favoritesOnly = false; $('search').value = ''; render(); }
+  function resetFilters() { selectedTag = ''; favoritesOnly = false; $('search').value = ''; window.SmartSuggestions.clear(); render(); }
   function navigate() {
     const view = location.hash;
+    if (previousView !== view && (view === '#recipes' || !view) && activeUserId && !recovering && window.SmartSuggestions.active()) void window.SmartSuggestions.refresh();
     if (previousView === '#planner' && (view === '#recipes' || !view) && activeUserId && !recovering) {
       void loadMealHistory(recipes.filter(recipe => recipe.data_source === 'supabase'));
     }
@@ -806,7 +820,7 @@
   $('editor').addEventListener('close', () => { photoVersion++; });
   $('parse').addEventListener('click', reviewIngredients);
   $('search').addEventListener('input', render);
-  $('sort').addEventListener('change', render);
+  $('sort').addEventListener('change', () => { window.SmartSuggestions.clear(); render(); });
   $('favorites').addEventListener('click', () => { favoritesOnly = !favoritesOnly; render(); });
   $('reset-filters').addEventListener('click', resetFilters);
   window.addEventListener('hashchange', navigate);
