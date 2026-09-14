@@ -39,9 +39,10 @@
       </form>
     </section>
     <div id="status" class="status" role="status" hidden></div>
+    <p id="history-warning" class="field-hint" role="status" hidden></p>
     <section id="library" hidden>
       <div class="page-heading"><div><p class="eyebrow">GOOD FOOD. SHARED TOGETHER.</p><h1>A little inspiration<br>for your table.</h1><p class="subheading">The old favorites. The new discoveries. All in one place.</p></div><button class="primary" id="add-recipe">＋ Add recipe</button></div>
-      <div class="toolbar"><label class="search"><span aria-hidden="true">⌕</span><input type="search" id="search" placeholder="Find a recipe, ingredient, or tag…" aria-label="Search recipes"></label><label class="sort">Sort by <select id="sort"><option value="newest">Recently added</option><option value="title">Recipe name</option><option value="quickest">Quickest first</option><option value="last">Last made</option></select></label></div>
+      <div class="toolbar"><label class="search"><span aria-hidden="true">⌕</span><input type="search" id="search" placeholder="Find a recipe, ingredient, or tag…" aria-label="Search recipes"></label><label class="sort">Sort by <select id="sort"><option value="newest">Recently added</option><option value="title">Recipe name</option><option value="quickest">Quickest first</option><option value="least_recent">Least recently made</option><option value="last">Most recently made</option><option value="most_made">Most made</option><option value="least_made">Least made</option></select></label></div>
       <div class="filter-row"><div id="tags" class="chips" aria-label="Filter recipes by tag"></div><button id="favorites" class="chip" aria-pressed="false">♡ Favorites</button></div>
       <div class="collection-heading"><h2>Your recipe collection</h2><span id="count"></span></div>
       <div id="recipe-grid" class="recipe-grid"></div>

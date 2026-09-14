@@ -28,12 +28,82 @@
   let activeUserId;
   let readController;
   let authGeneration = 0;
+  let historyRequest = 0;
+  let previousView = '';
+
+  function historyLabel(recipe, today = new Date()) {
+    if (!recipe.historyLoaded) return recipe.data_source === 'demo' ? 'Demo data' : 'Meal history unavailable';
+    if (!recipe.lastPlannedDate) return 'Not made yet';
+    const [year, month, day] = recipe.lastPlannedDate.split('-').map(Number);
+    const days = Math.floor((Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) - Date.UTC(year, month - 1, day)) / 86400000);
+    if (days < 0) return `Planned for ${new Date(year, month - 1, day).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    if (days < 7) return 'Last made this week';
+    let amount, unit;
+    if (days < 28) { amount = Math.floor(days / 7); unit = 'week'; }
+    else if (days < 60) { amount = 1; unit = 'month'; }
+    else if (days < 365) { amount = Math.round(days / 30.44); unit = 'month'; }
+    else { amount = Math.round(days / 365.25); unit = 'year'; }
+    return `Last made ~${amount} ${unit}${amount === 1 ? '' : 's'} ago`;
+  }
+  function compareHistory(a, b, mode) {
+    if (Boolean(a.historyLoaded) !== Boolean(b.historyLoaded)) return a.historyLoaded ? -1 : 1;
+    const recent = (a.lastPlannedDate || '').localeCompare(b.lastPlannedDate || '');
+    const count = (a.planCount || 0) - (b.planCount || 0);
+    return (mode === 'least_recent' ? recent : mode === 'last' ? -recent : mode === 'most_made' ? -count : count) || a.title.localeCompare(b.title);
+  }
+  function detailHistory(recipe) {
+    return `${historyLabel(recipe)}${recipe.historyLoaded ? ` · Made ${recipe.planCount} ${recipe.planCount === 1 ? 'time' : 'times'}` : ''}`;
+  }
+  async function loadMealHistory(collection, generation = authGeneration) {
+    const request = ++historyRequest;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    const current = () => generation === authGeneration && request === historyRequest;
+    const totals = new Map();
+    try {
+      // One shared scan, paginated only when the server's row limit requires it.
+      let offset = 0;
+      for (;;) {
+        const { data, count, error } = await client.from('meal_plan_items')
+          .select('recipe_id,meal_date', { count: 'exact' }).not('recipe_id', 'is', null)
+          .order('id').range(offset, offset + 999).abortSignal(controller.signal);
+        if (!current()) return;
+        if (error) throw error;
+        if (!Array.isArray(data)) throw new Error('Unexpected meal history response.');
+        for (const item of data) {
+          if (!item.recipe_id) continue;
+          const total = totals.get(item.recipe_id) || { lastPlannedDate: null, planCount: 0 };
+          total.planCount++;
+          if (!total.lastPlannedDate || item.meal_date > total.lastPlannedDate) total.lastPlannedDate = item.meal_date;
+          totals.set(item.recipe_id, total);
+        }
+        offset += data.length;
+        if (!data.length || (count !== null && offset >= count)) break;
+      }
+      if (!current()) return;
+      collection.forEach(recipe => Object.assign(recipe, totals.get(recipe.id) || { lastPlannedDate: null, planCount: 0 }, { historyLoaded: true }));
+      $('history-warning').textContent = ''; $('history-warning').hidden = true;
+    } catch (error) {
+      if (!current()) return;
+      collection.forEach(recipe => { recipe.historyLoaded = false; recipe.lastPlannedDate = null; recipe.planCount = null; });
+      $('history-warning').textContent = `Meal history could not load: ${error.message || String(error)}. Recipes are still available.`;
+      $('history-warning').hidden = false;
+    } finally {
+      clearTimeout(timeout);
+      if (current()) {
+        render();
+        const detailRecipe = collection.find(recipe => String(recipe.id) === $('detail-content').dataset.recipeId);
+        if ($('detail').open && detailRecipe && $('recipe-history')) $('recipe-history').textContent = detailHistory(detailRecipe);
+      }
+    }
+  }
   const recoveryParams = new URLSearchParams(location.hash.slice(1));
   let recovering = recoveryParams.get('type') === 'recovery' || location.hash === '#password-recovery';
   let recoverySession = null;
   let recoverySaving = false;
 
   function showRecovery(session) {
+    historyRequest++; $('history-warning').hidden = true;
     window.MealPlanner.setSession(null);
     recoverySession = session;
     ++authGeneration;
@@ -56,6 +126,7 @@
     const userId = session?.user?.id || null;
     if (userId === activeUserId) return;
     activeUserId = userId;
+    historyRequest++; $('history-warning').hidden = true;
     window.MealPlanner.setSession(userId);
     const generation = ++authGeneration;
     readController?.abort();
@@ -179,6 +250,7 @@
 
   async function loadRecipes({ savedId } = {}) {
     if (!activeUserId) return;
+    historyRequest++; $('history-warning').hidden = true;
     const generation = authGeneration;
     $('status').textContent = 'Loading recipes from Supabase…';
     const controller = new AbortController();
@@ -224,7 +296,7 @@
         prep_minutes: Number(row.prep_minutes || 0),
         cook_minutes: Number(row.cook_minutes || 0),
         favorite: Boolean(row.favorite ?? row.is_favorite),
-        last_made: row.last_made ?? row.last_made_at ?? null,
+        lastPlannedDate: null, planCount: null, historyLoaded: false,
         photo: row.image_path ? client.storage.from('recipe-images').getPublicUrl(row.image_path).data.publicUrl : safeUrl(row.photo_url || row.image_url || row.photo),
         instructions: String(row.instructions || ''),
         tags: [...new Set(recipeTags.filter(link => link.recipe_id === row.id).map(link => tagNames.get(link.tag_id)).filter(Boolean))],
@@ -238,6 +310,9 @@
       selectedTag = '';
       render();
       $('status').textContent = `Loaded ${loaded.length} recipes from Supabase.`;
+      // History is optional and must never turn a successful recipe read/save
+      // into a library failure. Render recipes before this request finishes.
+      void loadMealHistory(loaded, generation);
     } catch (error) {
       if (generation !== authGeneration) return;
       if (savedId) throw error;
@@ -278,7 +353,10 @@
       newest: (a, b) => (b.added_order || 0) - (a.added_order || 0) || (b.created_at || '').localeCompare(a.created_at || ''),
       title: (a, b) => a.title.localeCompare(b.title),
       quickest: (a, b) => duration(a) - duration(b),
-      last: (a, b) => (b.last_made || '').localeCompare(a.last_made || '')
+      last: (a, b) => compareHistory(a, b, 'last'),
+      least_recent: (a, b) => compareHistory(a, b, 'least_recent'),
+      most_made: (a, b) => compareHistory(a, b, 'most_made'),
+      least_made: (a, b) => compareHistory(a, b, 'least_made')
     };
     visible.sort(sorts[$('sort').value] || sorts.newest);
     $('tags').replaceChildren();
@@ -304,7 +382,7 @@
       }
       const copy = node('div', 'card-copy');
       const meta = node('div', 'card-meta');
-      meta.append(node('span', '', `${duration(recipe)} min · ${recipe.servings} servings`), node('span', '', recipe.last_made ? `Last made ${recipe.last_made}` : 'Not made yet'));
+      meta.append(node('span', '', `${duration(recipe)} min · ${recipe.servings} servings`), node('span', '', historyLabel(recipe)));
       copy.append(node('h3', '', recipe.title), tagsFor(recipe), meta);
       open.append(picture, copy);
       const favorite = button(recipe.favorite ? '♥' : '♡', 'favorite-mark', () => toggleFavorite(recipe));
@@ -320,6 +398,7 @@
   }
   function showDetail(recipe) {
     const content = $('detail-content');
+    content.dataset.recipeId = String(recipe.id);
     content.replaceChildren();
     const heading = node('div', 'dialog-heading');
     const title = node('h2', '', recipe.title); title.id = 'detail-title';
@@ -346,6 +425,7 @@
     favorite.disabled = recipe.data_source !== 'supabase' || busyRecipes.has(recipe.id) || recipe.deleted;
     favorite.setAttribute('aria-pressed', String(recipe.favorite));
     content.append(stats, favorite, body);
+    const history = node('p', 'field-hint', detailHistory(recipe)); history.id = 'recipe-history'; content.append(history);
     if (recipe.data_source === 'supabase') {
       const actions = node('div', 'form-actions');
       const edit = button('Edit recipe', 'secondary', () => { $('detail').close(); openEditor(recipe); });
@@ -696,6 +776,11 @@
   });
   function resetFilters() { selectedTag = ''; favoritesOnly = false; $('search').value = ''; render(); }
   function navigate() {
+    const view = location.hash;
+    if (previousView === '#planner' && (view === '#recipes' || !view) && activeUserId && !recovering) {
+      void loadMealHistory(recipes.filter(recipe => recipe.data_source === 'supabase'));
+    }
+    previousView = view;
     const plannerVisible = !recovering && Boolean(activeUserId) && location.hash === '#planner';
     window.MealPlanner.show(plannerVisible);
     if (recovering) { $('library').hidden = true; $('upcoming').hidden = true; return; }
