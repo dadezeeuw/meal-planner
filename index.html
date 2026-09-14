@@ -9,6 +9,7 @@
   <script defer src="config.js"></script>
   <script defer src="ingredients.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script defer src="planner.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
@@ -47,6 +48,12 @@
       <div id="empty" class="empty" hidden><span aria-hidden="true">♧</span><h2>Your next favorite starts here.</h2><p id="empty-message"></p><button class="primary" id="empty-add">＋ Add recipe</button><button id="reset-filters" class="secondary">Clear filters</button></div>
     </section>
     <section id="upcoming" class="empty" hidden><p class="eyebrow">A LITTLE MORE TO LOOK FORWARD TO</p><h1 id="upcoming-title"></h1><p id="upcoming-description"></p><a class="primary" href="#recipes">Back to recipes</a></section>
+    <section id="planner" hidden aria-labelledby="planner-title">
+      <div class="page-heading"><div><p class="eyebrow">MAKE ROOM AROUND THE TABLE</p><h1 id="planner-title">Your week, together.</h1><p class="subheading">A little planning. More time to enjoy dinner.</p></div><button type="button" id="copy-week" class="secondary">Copy previous week</button></div>
+      <div class="week-toolbar"><div class="week-navigation"><button type="button" id="previous-week" class="secondary" aria-label="Previous week">←</button><button type="button" id="current-week" class="secondary">This week</button><button type="button" id="next-week" class="secondary" aria-label="Next week">→</button></div><h2 id="week-heading"></h2></div>
+      <p id="planner-status" role="status"></p><button type="button" id="planner-retry" class="secondary" hidden>Retry loading week</button>
+      <div id="week-grid" class="week-grid"></div>
+    </section>
     <footer>Made for everyday meals &amp; the people you love.<span>OUR TABLE</span></footer>
   </main>
   <dialog id="editor" aria-labelledby="editor-title">
@@ -70,5 +77,17 @@
     </form>
   </dialog>
   <dialog id="detail" aria-labelledby="detail-title"><div id="detail-content"></div></dialog>
+  <dialog id="meal-editor" aria-labelledby="meal-editor-title">
+    <form id="meal-form">
+      <div class="dialog-heading"><h2 id="meal-editor-title">Plan a meal</h2><button type="button" id="meal-close" class="icon-button" aria-label="Close meal editor">×</button></div>
+      <div class="form-two"><label>Date<input id="meal-date" type="date" required></label><label>Meal<select id="meal-type"><option value="breakfast">Breakfast</option><option value="lunch">Lunch</option><option value="dinner">Dinner</option></select></label></div>
+      <label>What’s on the menu?<select id="meal-kind"><option value="recipe">Choose recipe</option><option value="custom">Enter custom meal</option></select></label>
+      <div id="meal-picker"><label for="meal-search">Search saved recipes</label><input id="meal-search" type="search" placeholder="Find a recipe…"><p id="meal-selected" role="status"></p><div id="meal-results" class="meal-results"></div></div>
+      <label id="custom-meal-label" hidden>Meal name<input id="custom-meal" maxlength="500" placeholder="Pizza, leftovers, dinner at Mom’s…"></label>
+      <label>Servings<input id="meal-servings" type="number" min="0.25" step="0.25"><small>Optional for custom meals.</small></label>
+      <p id="meal-status" role="status"></p>
+      <div class="form-actions"><button type="button" id="meal-cancel" class="secondary">Cancel</button><button type="submit" id="meal-save" class="primary">Save meal</button></div>
+    </form>
+  </dialog>
 </body>
 </html>

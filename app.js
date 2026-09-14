@@ -34,6 +34,7 @@
   let recoverySaving = false;
 
   function showRecovery(session) {
+    window.MealPlanner.setSession(null);
     recoverySession = session;
     ++authGeneration;
     readController?.abort();
@@ -55,6 +56,7 @@
     const userId = session?.user?.id || null;
     if (userId === activeUserId) return;
     activeUserId = userId;
+    window.MealPlanner.setSession(userId);
     const generation = ++authGeneration;
     readController?.abort();
     $('editor').close(); $('detail').close();
@@ -94,6 +96,7 @@
       client = window.supabase.createClient(projectUrl.href, config.SUPABASE_PUBLISHABLE_KEY, {
         auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
       });
+      window.MealPlanner.initialize(client);
       client.auth.onAuthStateChange((event, session) => {
         if (event === 'PASSWORD_RECOVERY') recovering = true;
         applySession(session);
@@ -347,9 +350,11 @@
       const actions = node('div', 'form-actions');
       const edit = button('Edit recipe', 'secondary', () => { $('detail').close(); openEditor(recipe); });
       const remove = button(recipe.deleted ? 'Retry image cleanup' : 'Delete recipe', 'secondary', () => deleteRecipe(recipe));
+      const plan = button('Add to meal plan', 'secondary', () => { $('detail').close(); window.MealPlanner.addRecipe(recipe); });
+      plan.disabled = busyRecipes.has(recipe.id) || recipe.deleted;
       edit.disabled = busyRecipes.has(recipe.id) || recipe.deleted;
       remove.disabled = busyRecipes.has(recipe.id);
-      actions.append(edit, remove);
+      actions.append(edit, plan, remove);
       const message = node('p'); message.id = 'detail-status'; message.setAttribute('role', 'status');
       content.append(actions, message);
     }
@@ -691,15 +696,17 @@
   });
   function resetFilters() { selectedTag = ''; favoritesOnly = false; $('search').value = ''; render(); }
   function navigate() {
+    const plannerVisible = !recovering && Boolean(activeUserId) && location.hash === '#planner';
+    window.MealPlanner.show(plannerVisible);
     if (recovering) { $('library').hidden = true; $('upcoming').hidden = true; return; }
     if (!activeUserId) { $('library').hidden = true; $('upcoming').hidden = true; return; }
     const page = location.hash.slice(1);
-    const upcoming = { planner: ['Weekly Planner', 'Meal planning is coming soon. Explore the recipe library in the meantime.'], groceries: ['Grocery List', 'Grocery lists are coming soon. Your demo recipes are ready to explore.'], history: ['History', 'Cooking history is coming soon. Demo last-made dates appear on recipe cards.'] };
+    const upcoming = { groceries: ['Grocery List', 'Grocery lists are coming soon. Your recipes are ready to explore.'], history: ['History', 'Cooking history is coming soon.'] };
     const destination = upcoming[page];
-    $('library').hidden = Boolean(destination); $('upcoming').hidden = !destination;
+    $('library').hidden = Boolean(destination) || plannerVisible; $('upcoming').hidden = !destination;
     if (destination) { $('upcoming-title').textContent = destination[0]; $('upcoming-description').textContent = destination[1]; }
     document.querySelectorAll('nav a').forEach(link => {
-      if (link.hash === `#${destination ? page : 'recipes'}`) link.setAttribute('aria-current', 'page');
+      if (link.hash === `#${destination || plannerVisible ? page : 'recipes'}`) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     });
   }
