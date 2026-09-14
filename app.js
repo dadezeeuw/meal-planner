@@ -13,6 +13,9 @@
   ];
   let savingRecipe = false;
   let saveDraft = null;
+  let editingRecipe = null;
+  let photoRemoved = false;
+  const busyRecipes = new Set();
   let photoBlob = null;
   let selectedTag = '';
   let favoritesOnly = false;
@@ -58,6 +61,7 @@
     $('detail-content').replaceChildren();
     form.reset(); photo = ''; photoVersion++;
     saveDraft = null; photoBlob = null;
+    editingRecipe = null; photoRemoved = false;
     $('remove-photo').hidden = true;
     $('photo-preview').removeAttribute('src'); $('photo-preview').hidden = true;
     $('ingredient-review').replaceChildren(); reviewedText = null;
@@ -300,7 +304,8 @@
       meta.append(node('span', '', `${duration(recipe)} min · ${recipe.servings} servings`), node('span', '', recipe.last_made ? `Last made ${recipe.last_made}` : 'Not made yet'));
       copy.append(node('h3', '', recipe.title), tagsFor(recipe), meta);
       open.append(picture, copy);
-      const favorite = button(recipe.favorite ? '♥' : '♡', 'favorite-mark', () => { recipe.favorite = !recipe.favorite; render(); });
+      const favorite = button(recipe.favorite ? '♥' : '♡', 'favorite-mark', () => toggleFavorite(recipe));
+      favorite.disabled = recipe.data_source !== 'supabase' || busyRecipes.has(recipe.id);
       favorite.setAttribute('aria-label', `Favorite ${recipe.title}`);
       favorite.setAttribute('aria-pressed', String(recipe.favorite));
       card.append(open, favorite);
@@ -334,14 +339,20 @@
     const instructions = node('section');
     instructions.append(node('h3', '', 'Instructions'), node('p', 'instructions', recipe.instructions || 'No instructions added.'));
     body.append(ingredients, instructions);
-    const favorite = button(recipe.favorite ? '♥ Favorited' : '♡ Add to favorites', 'secondary', () => {
-      recipe.favorite = !recipe.favorite;
-      favorite.textContent = recipe.favorite ? '♥ Favorited' : '♡ Add to favorites';
-      favorite.setAttribute('aria-pressed', String(recipe.favorite));
-      render();
-    });
+    const favorite = button(recipe.favorite ? '♥ Favorited' : '♡ Add to favorites', 'secondary', () => toggleFavorite(recipe));
+    favorite.disabled = recipe.data_source !== 'supabase' || busyRecipes.has(recipe.id) || recipe.deleted;
     favorite.setAttribute('aria-pressed', String(recipe.favorite));
     content.append(stats, favorite, body);
+    if (recipe.data_source === 'supabase') {
+      const actions = node('div', 'form-actions');
+      const edit = button('Edit recipe', 'secondary', () => { $('detail').close(); openEditor(recipe); });
+      const remove = button(recipe.deleted ? 'Retry image cleanup' : 'Delete recipe', 'secondary', () => deleteRecipe(recipe));
+      edit.disabled = busyRecipes.has(recipe.id) || recipe.deleted;
+      remove.disabled = busyRecipes.has(recipe.id);
+      actions.append(edit, remove);
+      const message = node('p'); message.id = 'detail-status'; message.setAttribute('role', 'status');
+      content.append(actions, message);
+    }
     const links = node('div', 'detail-links');
     [['source_url', 'Original recipe'], ['video_url', 'Watch video']].forEach(([key, label]) => {
       const url = safeUrl(recipe[key]);
@@ -349,33 +360,114 @@
       const link = node('a', '', label); link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer'; links.append(link);
     });
     content.append(links);
-    $('detail').showModal();
+    if (!$('detail').open) $('detail').showModal();
+  }
+  async function toggleFavorite(recipe) {
+    if (savingRecipe || saveDraft) {
+      $('status').textContent = 'Finish the pending recipe save before changing favorites.';
+      if ($('detail-status')) $('detail-status').textContent = $('status').textContent;
+      return;
+    }
+    if (recipe.data_source !== 'supabase' || busyRecipes.has(recipe.id) || !activeUserId || recovering) return;
+    const generation = authGeneration;
+    busyRecipes.add(recipe.id); render();
+    try {
+      const { data, error } = await client.from('recipes').update({ favorite: !recipe.favorite }).eq('id', recipe.id).select('favorite').single();
+      if (error) throw error;
+      if (generation !== authGeneration) return;
+      recipe.favorite = data.favorite;
+      $('status').textContent = 'Favorite updated.';
+    } catch (error) {
+      if (generation !== authGeneration) return;
+      $('status').textContent = `Favorite update failed: ${error.message}`;
+      if ($('detail-status')) $('detail-status').textContent = $('status').textContent;
+    } finally {
+      busyRecipes.delete(recipe.id);
+      if (generation === authGeneration) {
+        render();
+        if ($('detail').open && $('detail-title').textContent === recipe.title) {
+          const message = $('detail-status')?.textContent;
+          showDetail(recipe);
+          if (message) $('detail-status').textContent = message;
+        }
+      }
+    }
+  }
+  async function deleteRecipe(recipe) {
+    if (busyRecipes.has(recipe.id) || savingRecipe || saveDraft || !activeUserId || recovering) {
+      if ($('detail-status')) $('detail-status').textContent = 'Finish the pending save before deleting a recipe.';
+      return;
+    }
+    if (!recipe.deleted && !window.confirm(`Delete “${recipe.title}”? This permanently deletes the recipe and its ingredients and tag links.`)) return;
+    const generation = authGeneration;
+    busyRecipes.add(recipe.id); showDetail(recipe);
+    try {
+      if (!recipe.deleted) {
+        const { data, error } = await client.from('recipes').delete().eq('id', recipe.id).select('id,image_path');
+        if (error) throw error;
+        if (!data.length) throw new Error('Recipe was not deleted. It may no longer exist or access may be restricted.');
+        recipe.image_path = data[0].image_path;
+        recipe.deleted = true;
+      }
+      if (generation !== authGeneration) return;
+      const index = recipes.findIndex(item => item.id === recipe.id);
+      if (index !== -1) recipes.splice(index, 1);
+      selectedTag = ''; render();
+      if (recipe.image_path) {
+        const { error } = await client.storage.from('recipe-images').remove([recipe.image_path]);
+        if (error) throw error;
+      }
+      if (generation !== authGeneration) return;
+      $('detail').close();
+      $('status').textContent = `Deleted “${recipe.title}” successfully.`;
+    } catch (error) {
+      if (generation !== authGeneration) return;
+      busyRecipes.delete(recipe.id); showDetail(recipe);
+      const message = `${recipe.deleted ? 'Recipe deleted, but image cleanup failed' : 'Delete failed'}: ${error.message}`;
+      $('detail-status').textContent = message; $('status').textContent = message;
+    } finally { busyRecipes.delete(recipe.id); }
   }
   function safeUrl(value) {
     if (!value) return '';
     try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.href : ''; } catch { return ''; }
   }
-  function openEditor() {
+  function openEditor(recipe = null) {
     if (savingRecipe) return;
     if (saveDraft) { $('editor').showModal(); return; }
     Array.from(form.elements).forEach(control => { control.disabled = false; });
     photoBlob = null;
     $('remove-photo').hidden = true;
     form.reset(); photo = ''; photoVersion++; reviewedText = null;
+    editingRecipe = recipe;
+    photoRemoved = false;
+    $('editor-title').textContent = recipe ? 'Edit recipe' : 'Add a recipe';
     $('photo-preview').hidden = true; $('photo-preview').removeAttribute('src');
     $('ingredient-review').replaceChildren(); $('form-status').textContent = '';
     $('preview-submit').textContent = 'Save recipe';
     $('preview-submit').disabled = false;
+    if (recipe) {
+      for (const key of ['title', 'description', 'servings', 'prep_minutes', 'cook_minutes', 'instructions', 'source_url', 'video_url']) field(key).value = recipe[key] ?? '';
+      field('favorite').checked = recipe.favorite;
+      field('tags').value = recipe.tags.join(', ');
+      $('ingredient-paste').value = recipe.ingredients.map(item => [item.quantity_text, item.unit, item.ingredient + (item.preparation ? `, ${item.preparation}` : '')].filter(Boolean).join(' ')).join('\n');
+      reviewIngredients(recipe.ingredients);
+      if (recipe.photo) {
+        photo = recipe.photo;
+        $('photo-preview').src = photo; $('photo-preview').hidden = false;
+        $('remove-photo').hidden = false;
+      }
+    }
     $('editor').showModal();
   }
-  function reviewIngredients() {
+  function reviewIngredients(items) {
     reviewedText = $('ingredient-paste').value;
     $('ingredient-review').replaceChildren();
-    parse(reviewedText).forEach(item => {
+    (Array.isArray(items) ? items : parse(reviewedText)).forEach(item => {
       const row = node('div', 'ingredient-row');
+      row.dataset.grocerySection = item.grocery_section || 'Other';
       [['quantity_text', 'Quantity'], ['unit', 'Unit'], ['ingredient', 'Ingredient'], ['preparation', 'Preparation']].forEach(([key, label]) => {
         const wrapper = node('label', '', label);
-        const input = node('input'); input.value = item[key]; input.dataset.key = key;
+        const input = node('input'); input.value = item[key] ?? ''; input.dataset.key = key;
         wrapper.append(input); row.append(wrapper);
       });
       $('ingredient-review').append(row);
@@ -387,12 +479,14 @@
     photoVersion++;
     $('photo').value = '';
     photo = ''; photoBlob = null;
+    photoRemoved = true;
     $('photo-preview').removeAttribute('src'); $('photo-preview').hidden = true;
     $('remove-photo').hidden = true;
     if (saveDraft) {
+      if (saveDraft.imagePath) saveDraft.cleanupPaths.add(saveDraft.imagePath);
       // Keep all recipe/ingredient/tag progress. Clear even an image-path
       // update whose response was lost, using the existing recipe ID.
-      saveDraft.clearImage = saveDraft.clearImage || Boolean(saveDraft.imagePath);
+      saveDraft.clearImage = saveDraft.clearImage || Boolean(saveDraft.imagePath || saveDraft.oldImagePath);
       saveDraft.blob = null;
       saveDraft.imagePath = null;
       saveDraft.uploaded = false;
@@ -425,6 +519,7 @@
       if (version !== photoVersion) return;
       if (!compressed || !['image/jpeg', 'image/png', 'image/webp'].includes(compressed.type)) throw new Error('Photo compression failed.');
       photoBlob = compressed;
+      photoRemoved = false;
       photo = canvas.toDataURL('image/webp', 0.85);
       $('photo-preview').src = photo; $('photo-preview').hidden = false;
     } catch {
@@ -466,8 +561,24 @@
     checkAccount();
     if (!draft.recipeSaved) {
       draft.stage = 'Recipe save';
-      await insertOnce('recipes', draft.recipe);
+      if (draft.editing) {
+        const { id, image_path, ...changes } = draft.recipe;
+        const { error } = await client.from('recipes').update(changes).eq('id', id).select('id').single();
+        if (error) throw error;
+      } else await insertOnce('recipes', draft.recipe);
       draft.recipeSaved = true;
+    }
+    if (draft.editing && !draft.ingredientsCleared) {
+      checkAccount(); draft.stage = 'Replace ingredients';
+      const { error } = await client.from('recipe_ingredients').delete().eq('recipe_id', draft.recipe.id);
+      if (error) throw error;
+      draft.ingredientsCleared = true;
+    }
+    if (draft.editing && !draft.tagsCleared) {
+      checkAccount(); draft.stage = 'Replace tag links';
+      const { error } = await client.from('recipe_tags').delete().eq('recipe_id', draft.recipe.id);
+      if (error) throw error;
+      draft.tagsCleared = true;
     }
     for (const ingredient of draft.ingredients) {
       checkAccount(); draft.stage = 'Ingredient save';
@@ -517,8 +628,15 @@
       if (error) throw error;
       draft.imageSaved = true;
       draft.clearImage = false;
+      if (draft.oldImagePath && draft.oldImagePath !== draft.imagePath) draft.cleanupPaths.add(draft.oldImagePath);
     }
     checkAccount();
+    if (draft.imageSaved && draft.cleanupPaths.size) {
+      draft.stage = 'Old photo cleanup';
+      const { error } = await client.storage.from('recipe-images').remove([...draft.cleanupPaths]);
+      if (error) throw error;
+      draft.cleanupPaths.clear();
+    }
   }
 
   form.addEventListener('submit', async event => {
@@ -534,7 +652,7 @@
       }
       if (reviewedText !== $('ingredient-paste').value) reviewIngredients();
       const ingredients = Array.from($('ingredient-review').children, (row, index) => {
-        const item = { sort_order: index, grocery_section: 'Other' };
+        const item = { sort_order: index, grocery_section: row.dataset.grocerySection || 'Other' };
         row.querySelectorAll('input').forEach(input => { item[input.dataset.key] = input.value.trim(); });
         item.quantity = window.Ingredients.quantityValue(item.quantity_text);
         return item;
@@ -544,9 +662,9 @@
       }
       let tags;
       try { tags = normalizeTags(field('tags').value); } catch (error) { $('form-status').textContent = error.message; return; }
-      const id = crypto.randomUUID();
+      const id = editingRecipe ? editingRecipe.id : crypto.randomUUID();
       const recipe = { id, title, description: field('description').value.trim(), servings: Number(field('servings').value), prep_minutes: field('prep_minutes').value === '' ? null : Number(field('prep_minutes').value), cook_minutes: field('cook_minutes').value === '' ? null : Number(field('cook_minutes').value), favorite: field('favorite').checked, source_url: safeUrl(field('source_url').value) || null, video_url: safeUrl(field('video_url').value) || null, instructions: field('instructions').value.trim(), image_path: null };
-      saveDraft = { userId: activeUserId, generation: authGeneration, recipe, tags, ingredients: ingredients.map(item => ({ ...item, id: crypto.randomUUID(), recipe_id: id })), blob: photoBlob, completed: new Set() };
+      saveDraft = { userId: activeUserId, generation: authGeneration, recipe, tags, ingredients: ingredients.map(item => ({ ...item, id: crypto.randomUUID(), recipe_id: id })), blob: photoBlob, completed: new Set(), editing: Boolean(editingRecipe), oldImagePath: editingRecipe?.image_path || null, clearImage: photoRemoved, cleanupPaths: new Set() };
     }
     const draft = saveDraft;
     savingRecipe = true;
@@ -562,7 +680,7 @@
       $('editor').close();
       $('status').textContent = `Saved “${draft.recipe.title}” successfully.`;
     } catch (error) {
-      const message = `${draft.stage || 'Save'} failed: ${error.message}${error.code ? ` (code ${error.code})` : ''}. ${draft.recipeSaved ? `Recipe ${draft.recipe.id} has been created.` : 'Some steps may already be saved.'} Retry to finish this recipe without duplicating completed rows. Keep this tab open until saving finishes.`;
+      const message = `${draft.stage || 'Save'} failed: ${error.message}${error.code ? ` (code ${error.code})` : ''}. Some changes may already be saved to recipe ${draft.recipe.id}. Retry to finish without duplicating completed rows. Keep this tab open until saving finishes.`;
       $('form-status').textContent = message;
       if (!$('editor').open) $('status').textContent = message;
     } finally {
@@ -585,7 +703,7 @@
       else link.removeAttribute('aria-current');
     });
   }
-  ['add-recipe', 'empty-add'].forEach(id => $(id).addEventListener('click', openEditor));
+  ['add-recipe', 'empty-add'].forEach(id => $(id).addEventListener('click', () => openEditor()));
   document.querySelectorAll('[data-close]').forEach(control => control.addEventListener('click', () => $(control.dataset.close).close()));
   $('editor').addEventListener('cancel', event => { if (savingRecipe) event.preventDefault(); });
   $('editor').addEventListener('close', () => { photoVersion++; });
